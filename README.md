@@ -26,7 +26,9 @@ db/         MySQL-migraties
 ```
 
 - **Database:** MySQL op AWS (RDS/Aurora), eu-west-1 (Ierland)
-- **Inloggen:** Amazon Cognito (e-mailcode, geen wachtwoord)
+- **Inloggen:** mentesme-standaard — token via `metro-auth`-header, gevalideerd
+  tegen de metro-backend (mijn.metro.mentes.me). De koppeling zit als "seam" in
+  `apps/api/src/lib/auth.ts` en `apps/web/src/lib/auth.ts`.
 - **Productie:** `apps/web` → S3 + CloudFront · `apps/api` → App Runner/ECS ·
   op **https://zorgdossier.mentes.me**. Zie [`DEPLOY.md`](DEPLOY.md).
 
@@ -45,10 +47,8 @@ db/         MySQL-migraties
    cp apps/web/.env.example apps/web/.env
    ```
 
-   - `apps/api/.env`: `DATABASE_URL` (MySQL), `COGNITO_USER_POOL_ID`,
-     `COGNITO_CLIENT_ID`, `WEB_ORIGIN`.
-   - `apps/web/.env`: `VITE_API_URL`, `VITE_COGNITO_DOMAIN`,
-     `VITE_COGNITO_CLIENT_ID`.
+   - `apps/api/.env`: `DATABASE_URL` (MySQL), `METRO_BASE_URL`, `WEB_ORIGIN`.
+   - `apps/web/.env`: `VITE_API_URL`, `VITE_METRO_BASE_URL`.
 
 3. **Database** — draai de migratie tegen je MySQL:
 
@@ -70,9 +70,9 @@ db/         MySQL-migraties
 apps/web/src/lib/sections.ts   Alle onderwerpen (velden, tekenaars, kolommen)
 apps/web/src/components/         Editors: formulieren, rasters, log, handtekening
 apps/web/src/pages/              Pagina's: login, clienten, dossier, sectie, verslag
-apps/web/src/lib/{auth,api}.ts   Cognito-inlog (PKCE) + API-client
+apps/web/src/lib/{auth,api}.ts   metro-auth token + API-client
 apps/api/src/routes/api.ts       REST-endpoints (met lidmaatschapscheck)
-apps/api/src/lib/                db (mysql2), auth (Cognito verify), access
+apps/api/src/lib/                db (mysql2), auth (metro-auth seam), access
 db/migrations/                   MySQL-schema
 ```
 

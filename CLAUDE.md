@@ -23,8 +23,10 @@ infra/      (optioneel) IaC voor AWS
 ```
 
 - **Database:** MySQL op AWS (RDS/Aurora), eu-west-1 (Ierland).
-- **Auth:** Amazon Cognito (managed login, passwordless e-mailcode). De SPA doet
-  de OAuth2 code-flow met PKCE; de backend verifieert het id-token per request.
+- **Auth:** mentesme-standaard — een token in de `metro-auth`-header (+ `metro-group`),
+  gevalideerd tegen de metro-backend (mijn.metro.mentes.me), net als metro/mira.
+  De SEAM zit in `apps/api/src/lib/auth.ts` (backend) en `apps/web/src/lib/auth.ts`
+  (frontend): daar plug je de echte metro-login/validatie in.
 - **Toegangscontrole:** op applicatieniveau (de backend checkt lidmaatschap per
   dossier). Bewust niet zo streng als MentalAId — geen database-RLS.
 

@@ -1,23 +1,24 @@
 import { config } from "./config";
-import { getIdToken, clearTokens } from "./auth";
+import { getToken, getGroup, logout } from "./auth";
 
 /**
- * Aanroepen naar de backend-API met het Cognito id-token als Bearer.
- * Bij een verlopen sessie (401) sturen we naar /login.
+ * Aanroepen naar de backend-API met het token als `metro-auth`-header
+ * (mentesme-standaard). Bij een verlopen sessie (401) → terug naar /login.
  */
 async function request(path: string, init: RequestInit = {}): Promise<any> {
-  const token = await getIdToken();
+  const token = getToken();
+  const group = getGroup();
   const res = await fetch(`${config.apiUrl}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(token ? { "metro-auth": token } : {}),
+      ...(group ? { "metro-group": group } : {}),
       ...(init.headers || {}),
     },
   });
   if (res.status === 401) {
-    clearTokens();
-    window.location.href = "/login";
+    logout();
     throw new Error("sessie verlopen");
   }
   if (!res.ok) throw new Error(`Verzoek mislukt (${res.status})`);

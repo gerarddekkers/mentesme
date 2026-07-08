@@ -1,50 +1,49 @@
-import { CognitoJwtVerifier } from "aws-jwt-verify";
 import type { Request, Response, NextFunction } from "express";
 import { exec } from "./db.js";
 
-let _verifier: ReturnType<typeof CognitoJwtVerifier.create> | null = null;
-function getVerifier() {
-  if (!_verifier) {
-    _verifier = CognitoJwtVerifier.create({
-      userPoolId: process.env.COGNITO_USER_POOL_ID || "",
-      tokenUse: "id",
-      clientId: process.env.COGNITO_CLIENT_ID || "",
-    });
-  }
-  return _verifier;
-}
-
 export interface AuthedRequest extends Request {
   userId?: string;
+  userGroup?: string;
   userEmail?: string;
   userName?: string;
 }
 
 /**
- * Express-middleware: verifieer het Cognito id-token uit de Authorization-header
- * en zet req.userId (de Cognito `sub`). Zonder geldig token → 401.
+ * Auth volgens de mentesme-standaard: een token in de `metro-auth`-header
+ * (+ `metro-group` voor de tenant), net als metro / mira / builder_backend.
+ *
+ * >>> SEAM — hier plug je de echte metro-validatie in <<<
+ * Vervang `resolveUser` door een aanroep naar de metro-backend
+ * (mijn.metro.mentes.me/rest/...) die het token controleert en de gebruiker
+ * teruggeeft. Nu (dev): we nemen het token als gebruikers-id zodat de app
+ * lokaal meteen werkt.
  */
-export async function requireUser(
-  req: AuthedRequest,
-  res: Response,
-  next: NextFunction
-) {
-  const header = req.headers.authorization || "";
-  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
-  if (!token) return res.status(401).json({ error: "niet ingelogd" });
-  try {
-    const payload = (await getVerifier().verify(token)) as Record<string, unknown>;
-    req.userId = String(payload.sub);
-    req.userEmail = payload.email ? String(payload.email) : undefined;
-    req.userName = payload.name
-      ? String(payload.name)
-      : payload.email
-        ? String(payload.email)
-        : undefined;
-    next();
-  } catch {
-    return res.status(401).json({ error: "ongeldige sessie" });
-  }
+async function resolveUser(
+  token: string,
+  _group?: string
+): Promise<{ id: string; email?: string; name?: string } | null> {
+  if (!token) return null;
+  // TODO(metro): valideer `token` (+ group) tegen mijn.metro.mentes.me/rest/...
+  //   const r = await fetch(`${process.env.METRO_BASE_URL}/rest/auth/whoami`, {
+  //     headers: { "metro-auth": token, "metro-group": group ?? "" },
+  //   });
+  //   if (!r.ok) return null;
+  //   const u = await r.json();
+  //   return { id: u.id, email: u.email, name: u.name };
+  return { id: token, name: token };
+}
+
+/** Express-middleware: vereist een geldige metro-auth. Zet req.userId. */
+export async function requireUser(req: AuthedRequest, res: Response, next: NextFunction) {
+  const token = (req.header("metro-auth") || "").trim();
+  const group = req.header("metro-group") || undefined;
+  const user = await resolveUser(token, group);
+  if (!user) return res.status(401).json({ error: "niet ingelogd" });
+  req.userId = user.id;
+  req.userEmail = user.email;
+  req.userName = user.name;
+  req.userGroup = group;
+  next();
 }
 
 function initialsOf(name: string): string {

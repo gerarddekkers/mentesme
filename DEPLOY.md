@@ -6,21 +6,21 @@ Twee onderdelen, jullie eigen AWS-account, alles in **eu-west-1 (Ierland)**:
 Frontend (apps/web)  → S3 + CloudFront            → zorgdossier.mentes.me
 Backend  (apps/api)  → App Runner / ECS Fargate   → api.zorgdossier.mentes.me
 Database             → RDS / Aurora MySQL (privé subnets)
-Inloggen             → Amazon Cognito (managed login, e-mailcode)
+Inloggen             → metro-auth (mentesme-standaard, mijn.metro.mentes.me)
 DNS + TLS            → Route 53 + ACM
 ```
 
-## 1. Cognito (inloggen)
+## 1. Inloggen (metro-auth)
 
-- Maak een **User Pool** (eu-west-1). Zet sign-in op **e-mail** en schakel
-  **passwordless e-mailcode** (managed login / hosted UI) in.
-- Maak een **App client** (public, geen secret) voor de SPA. Zet:
-  - Allowed callback URL: `https://zorgdossier.mentes.me/auth/callback`
-    (en lokaal `http://localhost:5173/auth/callback`)
-  - Allowed sign-out URL: `https://zorgdossier.mentes.me/login`
-  - OAuth flows: **Authorization code grant** (PKCE), scopes `openid email profile`
-- Noteer: **User Pool ID**, **App client ID** en het **Cognito-domein**
-  (`https://<prefix>.auth.eu-west-1.amazoncognito.com`).
+Zorgdossier gebruikt de mentesme-standaard: een token in de `metro-auth`-header
+(+ `metro-group`), gevalideerd tegen de metro-backend. Er is dus **geen aparte
+auth-provider** nodig.
+
+- Backend: implementeer `resolveUser()` in `apps/api/src/lib/auth.ts` (de SEAM) →
+  valideer het token tegen `mijn.metro.mentes.me/rest/...` zoals in `metro`/`mira`.
+  Zet `METRO_BASE_URL` in de env.
+- Frontend: vervang de dev-login in `apps/web/src/lib/auth.ts` / `pages/Login.tsx`
+  door de echte metro-inlog die na succes `setToken(token, group)` aanroept.
 
 ## 2. Database (MySQL)
 
@@ -50,8 +50,7 @@ bij de RDS kan. Zet de env-variabelen:
 | Variabele | Waarde |
 | --- | --- |
 | `DATABASE_URL` | `mysql://user:pass@<rds-endpoint>:3306/zorgdossier` |
-| `COGNITO_USER_POOL_ID` | uit stap 1 |
-| `COGNITO_CLIENT_ID` | uit stap 1 |
+| `METRO_BASE_URL` | `https://mijn.metro.mentes.me` |
 | `WEB_ORIGIN` | `https://zorgdossier.mentes.me` |
 | `PORT` | `4000` |
 
@@ -63,9 +62,7 @@ Route 53). Bewaar geheimen in **Secrets Manager**.
 ```bash
 # Bouwen met productie-env (VITE_* worden ingebakken)
 VITE_API_URL=https://api.zorgdossier.mentes.me \
-VITE_COGNITO_DOMAIN=https://<prefix>.auth.eu-west-1.amazoncognito.com \
-VITE_COGNITO_CLIENT_ID=<app-client-id> \
-VITE_AWS_REGION=eu-west-1 \
+VITE_METRO_BASE_URL=https://mijn.metro.mentes.me \
 npm run build --workspace apps/web
 
 # Uploaden naar S3 + CloudFront invalidatie

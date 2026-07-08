@@ -65,19 +65,39 @@ async function resolveUser(token: string, group?: string): Promise<MetroUser | n
 }
 
 /**
- * Log in bij de metro-backend met e-mail + wachtwoord (`POST {METRO_BASE}/user/login`,
- * body `{ id, password }`) en geef het token + actieve groep terug. Wordt gebruikt
- * door de publieke `/api/login`-route zodat de metro-URL server-side blijft.
+ * Magic-link (e-mailcode) inloggen — mentesme-standaard, passwordless. Metro
+ * verstuurt een 6-cijferige code per e-mail en wisselt die om voor een token.
+ * Geen wachtwoord: simpel voor zorgprofessionals, en de mailbox is de tweede
+ * factor.
  */
-export async function loginWithMetro(
-  email: string,
-  password: string
-): Promise<{ token: string; group?: string; name?: string; email?: string } | null> {
+
+/** Stap 1: vraag een inlogcode aan (`POST {METRO_BASE}/auth/magic-link`). */
+export async function requestMagicCode(email: string): Promise<boolean> {
   try {
-    const r = await fetch(`${METRO_BASE}/user/login`, {
+    const r = await fetch(`${METRO_BASE}/auth/magic-link`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: email.trim().toLowerCase(), password }),
+      body: JSON.stringify({ email: email.trim().toLowerCase(), language: "nl" }),
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stap 2: wissel de code om voor een token (`POST {METRO_BASE}/auth/magic-verify`).
+ * Geeft het token + actieve groep terug; de metro-URL blijft server-side.
+ */
+export async function verifyMagicCode(
+  email: string,
+  code: string
+): Promise<{ token: string; group?: string; name?: string; email?: string } | null> {
+  try {
+    const r = await fetch(`${METRO_BASE}/auth/magic-verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim().toLowerCase(), code: code.trim() }),
     });
     if (!r.ok) return null;
     const u = (await r.json()) as {

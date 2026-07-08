@@ -1,20 +1,29 @@
 import { Router, type Response } from "express";
 import { randomUUID } from "node:crypto";
 import { query, exec, tx } from "../lib/db.js";
-import { requireUser, ensureProfile, loginWithMetro, type AuthedRequest } from "../lib/auth.js";
+import { requireUser, ensureProfile, requestMagicCode, verifyMagicCode, type AuthedRequest } from "../lib/auth.js";
 import { isMember, canEdit } from "../lib/access.js";
 
 export const api = Router();
 
-/* ---- Inloggen (publiek — vóór requireUser) ---- */
-// Proxy naar de metro-inlog: e-mail + wachtwoord → metro-token. Zo blijft de
-// metro-URL server-side en heeft de browser geen CORS naar metro nodig.
-api.post("/login", async (req, res) => {
-  const { email, password } = req.body ?? {};
-  if (!email?.trim() || !password)
-    return res.status(400).json({ error: "e-mail en wachtwoord verplicht" });
-  const result = await loginWithMetro(email, password);
-  if (!result) return res.status(401).json({ error: "inloggen mislukt" });
+/* ---- Inloggen: magic-link / e-mailcode (publiek — vóór requireUser) ---- */
+// Stap 1: vraag een 6-cijferige code aan per e-mail. Proxy naar metro zodat de
+// metro-URL server-side blijft (geen browser-CORS naar metro).
+api.post("/login/request", async (req, res) => {
+  const { email } = req.body ?? {};
+  if (!email?.trim()) return res.status(400).json({ error: "e-mailadres verplicht" });
+  const ok = await requestMagicCode(email);
+  if (!ok) return res.status(400).json({ error: "kon geen code versturen" });
+  res.json({ ok: true });
+});
+
+// Stap 2: wissel de code om voor een metro-token.
+api.post("/login/verify", async (req, res) => {
+  const { email, code } = req.body ?? {};
+  if (!email?.trim() || !code?.trim())
+    return res.status(400).json({ error: "e-mail en code verplicht" });
+  const result = await verifyMagicCode(email, code);
+  if (!result) return res.status(401).json({ error: "ongeldige of verlopen code" });
   res.json(result);
 });
 

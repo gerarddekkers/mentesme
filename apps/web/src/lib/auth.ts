@@ -23,12 +23,22 @@ export function isAuthenticated(): boolean {
   return Boolean(getToken());
 }
 
-/** Inloggen met Teamwork-account (e-mail + wachtwoord). Geeft true bij succes. */
-export async function login(email: string, password: string): Promise<boolean> {
-  const res = await fetch(`${config.apiUrl}/api/login`, {
+/** Stap 1: vraag een inlogcode aan per e-mail. Geeft true als de code verstuurd is. */
+export async function requestCode(email: string): Promise<boolean> {
+  const res = await fetch(`${config.apiUrl}/api/login/request`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email }),
+  });
+  return res.ok;
+}
+
+/** Stap 2: wissel de e-mailcode om voor een sessie. Geeft true bij succes. */
+export async function verifyCode(email: string, code: string): Promise<boolean> {
+  const res = await fetch(`${config.apiUrl}/api/login/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, code }),
   });
   if (!res.ok) return false;
   const data = (await res.json()) as { token?: string; group?: string };

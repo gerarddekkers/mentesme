@@ -1,0 +1,29 @@
+# Bitbucket Pipelines — groene gates voor het zorgdossier (monorepo)
+# main is protected: PR's moeten hier groen zijn (typecheck + build van web én api).
+
+image: node:20
+
+definitions:
+  steps:
+    - step: &validate
+        name: Typecheck & build (web + api)
+        caches:
+          - node
+        script:
+          - npm ci
+          - npm run typecheck
+          - npm run build
+        artifacts:
+          - apps/web/dist/**
+          - apps/api/dist/**
+
+pipelines:
+  # Elke PR moet groen zijn voordat mergen naar main mag.
+  pull-requests:
+    "**":
+      - step: *validate
+
+  # Validatie op main na merge.
+  branches:
+    main:
+      - step: *validate

@@ -8,74 +8,76 @@ zijn: grote knoppen, auto-opslaan, en printen per onderwerp.
 
 - **Alle onderwerpen** uit het papieren dossier + de SVB-zorgovereenkomst, als
   overzichtelijke tegels.
-- **Auto-opslaan** — geen opslaan-knop; alles wordt direct in de cloud bewaard.
+- **Auto-opslaan** — geen opslaan-knop; alles gaat direct naar de cloud.
 - **Aftekenen met één tik** (medicatie, defecatielijst) op naam van de medewerker.
 - **Tekenen met vinger of Apple Pencil** op de wilsverklaringen en opdrachten.
 - **Printen per onderwerp** en een **eindverslag als PDF** van het hele dossier.
-- **Meerdere medewerkers per dossier** met veilige toegangsrechten.
-- Werkt op **telefoon, tablet/iPad en pc** (installeerbaar als app / PWA).
+- **Meerdere medewerkers per dossier** met toegangsrechten.
+- Werkt op **telefoon, tablet/iPad en pc** (installeerbaar als PWA).
 
-## Techniek
+## Architectuur (mentesme-standaard)
 
-- [Next.js](https://nextjs.org) (App Router, TypeScript) + Tailwind CSS
-- [Supabase](https://supabase.com) — Postgres-database, inlog en toegangsrechten (RLS)
+Monorepo met npm workspaces — React-frontend + losse backend:
 
-## Aan de slag (eenmalige setup)
+```
+apps/web    Vite + React + TypeScript (SPA)
+apps/api    Node + Express + TypeScript (REST API)
+db/         MySQL-migraties
+```
 
-1. **Supabase-project aanmaken** op <https://supabase.com>.
-   Kies een **EU-regio** (bijv. Frankfurt) i.v.m. AVG — het gaat om medische
-   gegevens en BSN.
+- **Database:** MySQL op AWS (RDS/Aurora), eu-west-1 (Ierland)
+- **Inloggen:** Amazon Cognito (e-mailcode, geen wachtwoord)
+- **Productie:** `apps/web` → S3 + CloudFront · `apps/api` → App Runner/ECS ·
+  op **https://zorgdossier.mentes.me**. Zie [`DEPLOY.md`](DEPLOY.md).
 
-2. **Database opzetten**: open in Supabase de _SQL Editor_ en draai het bestand
-   [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql).
-   Dit maakt alle tabellen en de toegangsregels aan.
+## Lokaal draaien
 
-3. **Omgevingsvariabelen**: kopieer `.env.example` naar `.env.local` en vul in:
-
-   ```
-   NEXT_PUBLIC_SUPABASE_URL=...
-   NEXT_PUBLIC_SUPABASE_ANON_KEY=...
-   NEXT_PUBLIC_SITE_URL=http://localhost:3000
-   ```
-
-   Deze waarden staan in Supabase onder **Project Settings → API**.
-
-4. **Installeren en starten**:
+1. **Installeren**
 
    ```bash
    npm install
-   npm run dev
    ```
 
-   Open <http://localhost:3000>. Log in met je e-mailadres — je ontvangt een
-   inloglink (geen wachtwoord nodig).
+2. **Env invullen** — kopieer de voorbeelden en vul ze in:
 
-## Inloglink instellen in Supabase
+   ```bash
+   cp apps/api/.env.example apps/api/.env
+   cp apps/web/.env.example apps/web/.env
+   ```
 
-Zet in Supabase onder **Authentication → URL Configuration** de _Site URL_ en
-de _Redirect URLs_ goed (bijv. `http://localhost:3000/auth/callback` en later je
-echte domein). Zo komen de inloglinks op de juiste plek terecht.
+   - `apps/api/.env`: `DATABASE_URL` (MySQL), `COGNITO_USER_POOL_ID`,
+     `COGNITO_CLIENT_ID`, `WEB_ORIGIN`.
+   - `apps/web/.env`: `VITE_API_URL`, `VITE_COGNITO_DOMAIN`,
+     `VITE_COGNITO_CLIENT_ID`.
 
-## Publiceren (productie)
+3. **Database** — draai de migratie tegen je MySQL:
 
-Productie draait op **AWS eu-west-1 (Ierland)** op het subdomein
-**https://zorgdossier.mentes.me**, als container (zie `Dockerfile`). De volledige
-stap-voor-stap staat in **[`DEPLOY.md`](DEPLOY.md)** (ECR → App Runner/ECS →
-Route 53 + ACM). Zet `NEXT_PUBLIC_SITE_URL` op het subdomein en voeg de
-redirect-URL `https://zorgdossier.mentes.me/auth/callback` toe bij de auth-config.
+   ```bash
+   mysql --host=... --user=... -p zorgdossier < db/migrations/0001_init.sql
+   ```
+
+4. **Starten**
+
+   ```bash
+   npm run dev        # frontend op :5173, backend op :4000
+   ```
+
+   Zonder ingevulde env toont de app een setup-scherm.
 
 ## Structuur
 
 ```
-supabase/migrations/   Databaseschema + toegangsregels (RLS)
-src/lib/sections.ts    Alle onderwerpen (velden, tekenaars, kolommen)
-src/lib/supabase/      Supabase-clients (browser / server / middleware)
-src/components/         Editors: formulieren, rasters, logregels, handtekening
-src/app/               Pagina's: inloggen, cliënten, dossier, onderwerp, verslag
+apps/web/src/lib/sections.ts   Alle onderwerpen (velden, tekenaars, kolommen)
+apps/web/src/components/         Editors: formulieren, rasters, log, handtekening
+apps/web/src/pages/              Pagina's: login, clienten, dossier, sectie, verslag
+apps/web/src/lib/{auth,api}.ts   Cognito-inlog (PKCE) + API-client
+apps/api/src/routes/api.ts       REST-endpoints (met lidmaatschapscheck)
+apps/api/src/lib/                db (mysql2), auth (Cognito verify), access
+db/migrations/                   MySQL-schema
 ```
 
 ## Volgende stappen (roadmap)
 
 - **OCR**: bestaande papieren formulieren inscannen en velden voorinvullen.
-- Herinneringen (bijv. katheter vervangen), en dossier delen met een collega
-  via de knop "toegang beheren".
+- "Toegang beheren": een collega uitnodigen voor een dossier vanuit de app.
+- Herinneringen (bijv. katheter vervangen).

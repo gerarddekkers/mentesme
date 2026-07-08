@@ -1,105 +1,90 @@
 # Deploy — AWS eu-west-1 (Ierland) → zorgdossier.mentes.me
 
-Deze app draait als **container** (Next.js standalone, zie `Dockerfile`) en past
-zo in de standaard mentesme-AWS-opzet in **Ierland (eu-west-1)**. Hieronder de
-kortste weg, plus de keuze voor de datalaag.
-
-## Overzicht
+Twee onderdelen, jullie eigen AWS-account, alles in **eu-west-1 (Ierland)**:
 
 ```
-Gebruiker ─► Route 53 (zorgdossier.mentes.me)
-          ─► ACM-certificaat (eu-west-1)
-          ─► Hosting (App Runner  óf  ECS Fargate achter ALB)
-          ─► Next.js-container  ─► Supabase / Postgres (eu-west-1)
+Frontend (apps/web)  → S3 + CloudFront            → zorgdossier.mentes.me
+Backend  (apps/api)  → App Runner / ECS Fargate   → api.zorgdossier.mentes.me
+Database             → RDS / Aurora MySQL (privé subnets)
+Inloggen             → Amazon Cognito (managed login, e-mailcode)
+DNS + TLS            → Route 53 + ACM
 ```
 
-## 1. Datalaag kiezen
+## 1. Cognito (inloggen)
 
-De app gebruikt Postgres + auth via een Supabase-compatibele laag. Twee opties,
-beide met **data in AWS Ierland**:
+- Maak een **User Pool** (eu-west-1). Zet sign-in op **e-mail** en schakel
+  **passwordless e-mailcode** (managed login / hosted UI) in.
+- Maak een **App client** (public, geen secret) voor de SPA. Zet:
+  - Allowed callback URL: `https://zorgdossier.mentes.me/auth/callback`
+    (en lokaal `http://localhost:5173/auth/callback`)
+  - Allowed sign-out URL: `https://zorgdossier.mentes.me/login`
+  - OAuth flows: **Authorization code grant** (PKCE), scopes `openid email profile`
+- Noteer: **User Pool ID**, **App client ID** en het **Cognito-domein**
+  (`https://<prefix>.auth.eu-west-1.amazoncognito.com`).
 
-- **A — Supabase, regio `eu-west-1` (Ierland).** Snelst: alle huidige code werkt
-  ongewijzigd. Supabase draait zelf op AWS. Maak het project aan met regio
-  *West EU (Ireland)* en draai `supabase/migrations/0001_init.sql`.
-- **B — Volledig in jullie AWS-account.** RDS/Aurora Postgres (eu-west-1) +
-  Amazon Cognito voor inlog. Vereist het ombouwen van `src/lib/supabase/*` en de
-  auth-pagina naar Cognito. Meer werk; kies dit als beleid is dat *alles* in het
-  eigen AWS-account moet staan. (Ik kan dit als vervolgstap doen.)
+## 2. Database (MySQL)
 
-> Advies: begin met **A** om live te gaan op het subdomein; migreer later naar
-> **B** als jullie compliance dat vereist. Het datamodel/SQL blijft gelijk.
+- Zet een **RDS/Aurora MySQL** op in privé subnets (eu-west-1). Maak database
+  `zorgdossier` en een app-gebruiker.
+- Draai de migratie:
 
-## 2. Container bouwen & pushen (ECR)
+  ```bash
+  mysql --host=<rds-endpoint> --user=<app> -p zorgdossier < db/migrations/0001_init.sql
+  ```
+
+## 3. Backend (apps/api) — container
 
 ```bash
-# Eenmalig: ECR-repo
-aws ecr create-repository --repository-name zorgdossier --region eu-west-1
-
-# Inloggen op ECR
+# Bouwen (vanuit repo-root) en pushen naar ECR
+aws ecr create-repository --repository-name zorgdossier-api --region eu-west-1
 aws ecr get-login-password --region eu-west-1 \
   | docker login --username AWS --password-stdin <ACCOUNT>.dkr.ecr.eu-west-1.amazonaws.com
-
-# Bouwen met de publieke env-waarden ingebakken
-docker build \
-  --build-arg NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
-  --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY \
-  --build-arg NEXT_PUBLIC_SITE_URL=https://zorgdossier.mentes.me \
-  -t zorgdossier .
-
-docker tag zorgdossier <ACCOUNT>.dkr.ecr.eu-west-1.amazonaws.com/zorgdossier:latest
-docker push <ACCOUNT>.dkr.ecr.eu-west-1.amazonaws.com/zorgdossier:latest
+docker build -f apps/api/Dockerfile -t zorgdossier-api .
+docker tag zorgdossier-api <ACCOUNT>.dkr.ecr.eu-west-1.amazonaws.com/zorgdossier-api:latest
+docker push <ACCOUNT>.dkr.ecr.eu-west-1.amazonaws.com/zorgdossier-api:latest
 ```
 
-## 3. Hosting
-
-**Optie 1 — AWS App Runner (eenvoudigst).** Maak een App Runner-service in
-`eu-west-1` op basis van de ECR-image, poort `3000`. Voeg onder *Custom domains*
-`zorgdossier.mentes.me` toe; App Runner geeft DNS-records die je in Route 53 zet
-en regelt het certificaat.
-
-**Optie 2 — ECS Fargate + ALB.** Task definition met de ECR-image (poort 3000),
-service achter een Application Load Balancer, ACM-certificaat op de HTTPS-listener,
-en in Route 53 een alias-record `zorgdossier.mentes.me` → ALB. Past het beste als
-jullie andere mentesme-services ook op ECS draaien.
-
-## 4. DNS & certificaat (Route 53 + ACM)
-
-- Vraag in **ACM (eu-west-1)** een certificaat aan voor `zorgdossier.mentes.me`
-  (of een wildcard `*.mentes.me`) en valideer via DNS.
-- Zet in de **Route 53 hosted zone van mentes.me** het record voor
-  `zorgdossier` naar de hosting (App Runner-doel of ALB-alias).
-
-## 5. Omgevingsvariabelen (runtime)
-
-Zet op de service:
+Draai de image op **App Runner** of **ECS Fargate** (poort 4000), in het VPC dat
+bij de RDS kan. Zet de env-variabelen:
 
 | Variabele | Waarde |
 | --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` | URL van je Postgres/Supabase (eu-west-1) |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | anon/public key |
-| `NEXT_PUBLIC_SITE_URL` | `https://zorgdossier.mentes.me` |
+| `DATABASE_URL` | `mysql://user:pass@<rds-endpoint>:3306/zorgdossier` |
+| `COGNITO_USER_POOL_ID` | uit stap 1 |
+| `COGNITO_CLIENT_ID` | uit stap 1 |
+| `WEB_ORIGIN` | `https://zorgdossier.mentes.me` |
+| `PORT` | `4000` |
 
-De `NEXT_PUBLIC_*` waarden horen óók als `--build-arg` mee (stap 2), omdat ze in
-de client-bundel worden ingebakken.
+Zet er een subdomein op, bijv. `api.zorgdossier.mentes.me` (ACM-certificaat +
+Route 53). Bewaar geheimen in **Secrets Manager**.
 
-## 6. Inlog-redirects goedzetten
+## 4. Frontend (apps/web) — statisch
 
-In Supabase (of Cognito) onder *Authentication → URL Configuration*:
+```bash
+# Bouwen met productie-env (VITE_* worden ingebakken)
+VITE_API_URL=https://api.zorgdossier.mentes.me \
+VITE_COGNITO_DOMAIN=https://<prefix>.auth.eu-west-1.amazoncognito.com \
+VITE_COGNITO_CLIENT_ID=<app-client-id> \
+VITE_AWS_REGION=eu-west-1 \
+npm run build --workspace apps/web
 
-- **Site URL**: `https://zorgdossier.mentes.me`
-- **Redirect URL**: `https://zorgdossier.mentes.me/auth/callback`
+# Uploaden naar S3 + CloudFront invalidatie
+aws s3 sync apps/web/dist s3://<bucket> --delete
+aws cloudfront create-invalidation --distribution-id <id> --paths "/*"
+```
 
-(Voor lokaal testen ook `http://localhost:3000/auth/callback` toevoegen.)
+CloudFront: zet een **SPA-fallback** (403/404 → `/index.html`, status 200) zodat
+de client-side routes werken. Koppel `zorgdossier.mentes.me` via Route 53 + ACM.
 
-## 7. Check
+## 5. Check
 
-Open `https://zorgdossier.mentes.me` → je komt op het inlogscherm. Log in met je
-e-mailadres, de link brengt je in het dossieroverzicht.
+Open `https://zorgdossier.mentes.me` → inlogscherm → inloggen met e-mailcode →
+dossieroverzicht. Backend-gezondheid: `https://api.zorgdossier.mentes.me/health`.
 
 ---
 
-### CI/CD (optioneel, jullie standaard)
+### CI/CD (optioneel)
 
-De bouwstappen hierboven passen 1-op-1 in een pipeline (GitHub Actions / Bitbucket
-Pipelines): build → push naar ECR → nieuwe revisie op App Runner/ECS. Laat me
-weten welke jullie gebruiken, dan lever ik het pipeline-bestand mee.
+De stappen 3–4 passen in een pipeline (GitHub Actions / Bitbucket Pipelines):
+frontend build → S3 sync + invalidatie; backend build → ECR push → nieuwe
+revisie. Laat weten welke jullie gebruiken, dan lever ik het pipeline-bestand mee.

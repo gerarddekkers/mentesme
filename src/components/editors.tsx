@@ -1,9 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { Icon } from "@/lib/icons";
 import type { SectionDef } from "@/lib/sections";
+
+/* ------------------------------------------------------------------ */
+/*  Server-communicatie                                                */
+/* ------------------------------------------------------------------ */
+async function post(url: string, body: unknown): Promise<any> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Opslaan mislukt (${res.status})`);
+  return res.json();
+}
 
 /* ------------------------------------------------------------------ */
 /*  Auto-opslaan-indicator                                            */
@@ -25,10 +37,31 @@ function useSaveState() {
 function SavePill({ state, time }: { state: SaveState; time: string }) {
   if (state === "idle") return null;
   return (
-    <span className={`savepill${state === "saving" ? " saving" : ""}`} style={{ position: "fixed", top: 14, right: 66, zIndex: 40 }}>
+    <span
+      className={`savepill${state === "saving" ? " saving" : ""}`}
+      style={{ position: "fixed", top: 14, right: 66, zIndex: 40 }}
+    >
       <span className="dot" />
       {state === "saving" ? "Opslaan…" : `Opgeslagen ${time}`}
     </span>
+  );
+}
+
+function SaveFoot() {
+  return (
+    <div className="savefoot">
+      <Icon name="cloud" width={16} style={{ color: "var(--ok)" }} /> Alles wordt automatisch bewaard in de beveiligde cloud
+    </div>
+  );
+}
+
+function ActionBar() {
+  return (
+    <div className="actionbar">
+      <button className="btn primary" onClick={() => window.print()}>
+        <Icon name="print" width={20} /> Print deze pagina
+      </button>
+    </div>
   );
 }
 
@@ -36,10 +69,9 @@ function SavePill({ state, time }: { state: SaveState; time: string }) {
 /*  Handtekening-veld (vinger / Apple Pencil)                          */
 /* ------------------------------------------------------------------ */
 export function SignaturePad({
-  clientId, sectionKey, signerIndex, label, meId, initial,
+  clientId, sectionKey, signerIndex, label, initial,
 }: {
-  clientId: string; sectionKey: string; signerIndex: number; label: string;
-  meId: string; initial: string | null;
+  clientId: string; sectionKey: string; signerIndex: number; label: string; initial: string | null;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -48,7 +80,6 @@ export function SignaturePad({
   const drawing = useRef(false);
   const last = useRef<{ x: number; y: number } | null>(null);
   const dirty = useRef(false);
-  const supabase = createClient();
 
   useEffect(() => {
     const canvas = canvasRef.current!;
@@ -101,18 +132,14 @@ export function SignaturePad({
     const image = canvasRef.current!.toDataURL("image/png");
     const t = new Date();
     setWhen(`${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`);
-    await supabase.from("signatures").upsert(
-      { client_id: clientId, section_key: sectionKey, signer_index: signerIndex, signer_name: label, image, signed_by: meId },
-      { onConflict: "client_id,section_key,signer_index" }
-    );
+    await post("/api/signature", { op: "set", clientId, sectionKey, signerIndex, signerName: label, image });
   }
   async function clear() {
     const canvas = canvasRef.current!;
     canvas.getContext("2d")!.clearRect(0, 0, canvas.width, canvas.height);
     setSigned(false);
     setWhen("");
-    await supabase.from("signatures").delete()
-      .match({ client_id: clientId, section_key: sectionKey, signer_index: signerIndex });
+    await post("/api/signature", { op: "delete", clientId, sectionKey, signerIndex });
   }
 
   return (
@@ -121,58 +148,28 @@ export function SignaturePad({
         <Icon name="pen" width={16} style={{ color: "var(--accent)" }} /> {label}
       </div>
       <div ref={wrapRef} className={`sigpad${signed ? " signed" : ""}`}>
-        <canvas
-          ref={canvasRef}
-          onPointerDown={down}
-          onPointerMove={move}
-          onPointerUp={up}
-          onPointerLeave={up}
-        />
+        <canvas ref={canvasRef} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerLeave={up} />
         <div className="ph">Teken hier met je vinger of pen</div>
       </div>
       <div className="sigrow">
         <small>{signed ? (when ? `Getekend · ${when}` : "Getekend") : ""}</small>
-        <button className="sigclear" onClick={clear} type="button">
-          Wissen
-        </button>
+        <button className="sigclear" onClick={clear} type="button">Wissen</button>
       </div>
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/*  Onderste actiebalk (printen)                                       */
-/* ------------------------------------------------------------------ */
-function ActionBar({ clientId }: { clientId: string }) {
-  return (
-    <div className="actionbar">
-      <button className="btn primary" onClick={() => window.print()}>
-        <Icon name="print" width={20} /> Print deze pagina
-      </button>
-    </div>
-  );
-}
-
-function SaveFoot() {
-  return (
-    <div className="savefoot">
-      <Icon name="cloud" width={16} style={{ color: "var(--ok)" }} /> Alles wordt automatisch bewaard in de beveiligde cloud
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Formulier-editor (velden + evt. handtekeningen)                    */
+/*  Formulier-editor                                                   */
 /* ------------------------------------------------------------------ */
 export function FormEditor({
-  clientId, section, meId, initialData, initialSignatures = [],
+  clientId, section, initialData, initialSignatures = [],
 }: {
-  clientId: string; section: SectionDef; meId: string;
+  clientId: string; section: SectionDef;
   initialData: Record<string, string>; initialSignatures?: (string | null)[];
 }) {
   const [values, setValues] = useState<Record<string, string>>(initialData || {});
   const { state, time, saving, saved } = useSaveState();
-  const supabase = createClient();
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function update(key: string, val: string) {
@@ -181,10 +178,7 @@ export function FormEditor({
     saving();
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(async () => {
-      await supabase.from("section_data").upsert(
-        { client_id: clientId, section_key: section.key, data: next, updated_by: meId, updated_at: new Date().toISOString() },
-        { onConflict: "client_id,section_key" }
-      );
+      await post("/api/section", { clientId, sectionKey: section.key, data: next });
       saved();
     }, 600);
   }
@@ -202,11 +196,7 @@ export function FormEditor({
             <div className="field" key={fl.key}>
               <label htmlFor={fl.key}>{fl.label}</label>
               {fl.hint && <div className="hint">{fl.hint}</div>}
-              <input
-                id={fl.key}
-                value={values[fl.key] ?? ""}
-                onChange={(e) => update(fl.key, e.target.value)}
-              />
+              <input id={fl.key} value={values[fl.key] ?? ""} onChange={(e) => update(fl.key, e.target.value)} />
             </div>
           ))}
         </div>
@@ -233,7 +223,6 @@ export function FormEditor({
                 sectionKey={section.key}
                 signerIndex={i}
                 label={label}
-                meId={meId}
                 initial={initialSignatures[i] ?? null}
               />
             ))}
@@ -242,7 +231,7 @@ export function FormEditor({
       )}
 
       <SaveFoot />
-      <ActionBar clientId={clientId} />
+      <ActionBar />
     </>
   );
 }
@@ -251,15 +240,13 @@ export function FormEditor({
 /*  Aftekenlijst medicatie                                             */
 /* ------------------------------------------------------------------ */
 export function MedGrid({
-  clientId, section, me, meId, initialMeds, initialCells,
+  clientId, section, me, initialMeds, initialCells,
 }: {
-  clientId: string; section: SectionDef; me: string; meId: string;
-  initialMeds: string[]; initialCells: Record<string, string>;
+  clientId: string; section: SectionDef; me: string; initialMeds: string[]; initialCells: Record<string, string>;
 }) {
   const [meds, setMeds] = useState<string[]>(initialMeds.length ? initialMeds : ["", "", "", ""]);
   const [cells, setCells] = useState<Record<string, string>>(initialCells);
   const { state, time, saving, saved } = useSaveState();
-  const supabase = createClient();
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const days = Array.from({ length: 31 }, (_, i) => i + 1);
 
@@ -268,10 +255,7 @@ export function MedGrid({
     saving();
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(async () => {
-      await supabase.from("section_data").upsert(
-        { client_id: clientId, section_key: section.key, data: { meds: next }, updated_by: meId, updated_at: new Date().toISOString() },
-        { onConflict: "client_id,section_key" }
-      );
+      await post("/api/section", { clientId, sectionKey: section.key, data: { meds: next } });
       saved();
     }, 600);
   }
@@ -283,13 +267,10 @@ export function MedGrid({
       const next = { ...cells };
       delete next[key];
       setCells(next);
-      await supabase.from("grid_cells").delete().match({ client_id: clientId, section_key: section.key, cell_key: key });
+      await post("/api/grid", { op: "delete", clientId, sectionKey: section.key, cellKey: key });
     } else {
       setCells({ ...cells, [key]: me });
-      await supabase.from("grid_cells").upsert(
-        { client_id: clientId, section_key: section.key, cell_key: key, value: me, updated_by: meId },
-        { onConflict: "client_id,section_key,cell_key" }
-      );
+      await post("/api/grid", { op: "set", clientId, sectionKey: section.key, cellKey: key, value: me });
     }
     saved();
   }
@@ -299,17 +280,13 @@ export function MedGrid({
       <SavePill state={state} time={time} />
       <div className="card-block">
         <div className="sectiontitle">Maand · huidige maand</div>
-        <div className="sectionsub">
-          Tik in een vakje om af te tekenen met je initialen ({me}). Vul links de medicijnnamen in.
-        </div>
+        <div className="sectionsub">Tik in een vakje om af te tekenen met je initialen ({me}). Vul links de medicijnnamen in.</div>
         <div className="gridwrap">
           <table className="aftek">
             <thead>
               <tr>
                 <th className="med">Medicijn</th>
-                {days.map((d) => (
-                  <th key={d}>{d}</th>
-                ))}
+                {days.map((d) => <th key={d}>{d}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -320,10 +297,7 @@ export function MedGrid({
                       value={name}
                       placeholder="Medicijn…"
                       onChange={(e) => saveMeds(meds.map((m, i) => (i === mi ? e.target.value : m)))}
-                      style={{
-                        border: "none", background: "transparent", font: "inherit",
-                        color: "var(--ink)", width: "100%", padding: "10px 4px",
-                      }}
+                      style={{ border: "none", background: "transparent", font: "inherit", color: "var(--ink)", width: "100%", padding: "10px 4px" }}
                     />
                   </td>
                   {days.map((d) => {
@@ -331,9 +305,7 @@ export function MedGrid({
                     const v = cells[key];
                     return (
                       <td key={d}>
-                        <div className={`cell${v ? " done" : ""}`} onClick={() => toggle(mi, d)}>
-                          {v || ""}
-                        </div>
+                        <div className={`cell${v ? " done" : ""}`} onClick={() => toggle(mi, d)}>{v || ""}</div>
                       </td>
                     );
                   })}
@@ -347,7 +319,7 @@ export function MedGrid({
         </button>
       </div>
       <SaveFoot />
-      <ActionBar clientId={clientId} />
+      <ActionBar />
     </>
   );
 }
@@ -358,13 +330,12 @@ export function MedGrid({
 const defecOpts = ["", "N", "H", "D", "Z", "ml", "C"];
 
 export function DefecGrid({
-  clientId, section, meId, initialCells,
+  clientId, section, initialCells,
 }: {
-  clientId: string; section: SectionDef; meId: string; initialCells: Record<string, string>;
+  clientId: string; section: SectionDef; initialCells: Record<string, string>;
 }) {
   const [cells, setCells] = useState<Record<string, string>>(initialCells);
   const { state, time, saving, saved } = useSaveState();
-  const supabase = createClient();
   const days = Array.from({ length: 31 }, (_, i) => i + 1);
 
   async function cycle(day: number) {
@@ -377,13 +348,10 @@ export function DefecGrid({
       const next = { ...cells };
       delete next[key];
       setCells(next);
-      await supabase.from("grid_cells").delete().match({ client_id: clientId, section_key: section.key, cell_key: key });
+      await post("/api/grid", { op: "delete", clientId, sectionKey: section.key, cellKey: key });
     } else {
       setCells({ ...cells, [key]: val });
-      await supabase.from("grid_cells").upsert(
-        { client_id: clientId, section_key: section.key, cell_key: key, value: val, updated_by: meId },
-        { onConflict: "client_id,section_key,cell_key" }
-      );
+      await post("/api/grid", { op: "set", clientId, sectionKey: section.key, cellKey: key, value: val });
     }
     saved();
   }
@@ -416,7 +384,7 @@ export function DefecGrid({
         </div>
       </div>
       <SaveFoot />
-      <ActionBar clientId={clientId} />
+      <ActionBar />
     </>
   );
 }
@@ -425,16 +393,15 @@ export function DefecGrid({
 /*  Tabel-editor (katheterschema)                                      */
 /* ------------------------------------------------------------------ */
 export function TableEditor({
-  clientId, section, meId, initialRows,
+  clientId, section, initialRows,
 }: {
-  clientId: string; section: SectionDef; meId: string; initialRows: string[][];
+  clientId: string; section: SectionDef; initialRows: string[][];
 }) {
   const cols = section.columns ?? [];
   const [rows, setRows] = useState<string[][]>(
     initialRows.length ? initialRows : Array.from({ length: 3 }, () => cols.map(() => ""))
   );
   const { state, time, saving, saved } = useSaveState();
-  const supabase = createClient();
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function persist(next: string[][]) {
@@ -442,10 +409,7 @@ export function TableEditor({
     saving();
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(async () => {
-      await supabase.from("section_data").upsert(
-        { client_id: clientId, section_key: section.key, data: { rows: next }, updated_by: meId, updated_at: new Date().toISOString() },
-        { onConflict: "client_id,section_key" }
-      );
+      await post("/api/section", { clientId, sectionKey: section.key, data: { rows: next } });
       saved();
     }, 600);
   }
@@ -459,11 +423,7 @@ export function TableEditor({
         <div className="gridwrap">
           <table className="aftek">
             <thead>
-              <tr>
-                {cols.map((c, i) => (
-                  <th key={i} className={i === 0 ? "med" : ""} style={{ minWidth: 120 }}>{c}</th>
-                ))}
-              </tr>
+              <tr>{cols.map((c, i) => <th key={i} className={i === 0 ? "med" : ""} style={{ minWidth: 120 }}>{c}</th>)}</tr>
             </thead>
             <tbody>
               {rows.map((row, ri) => (
@@ -487,7 +447,7 @@ export function TableEditor({
         </button>
       </div>
       <SaveFoot />
-      <ActionBar clientId={clientId} />
+      <ActionBar />
     </>
   );
 }
@@ -503,26 +463,26 @@ export interface LogEntry {
 }
 
 export function LogList({
-  clientId, section, me, meId, initial,
+  clientId, section, me, initial,
 }: {
-  clientId: string; section: SectionDef; me: string; meId: string; initial: LogEntry[];
+  clientId: string; section: SectionDef; me: string; initial: LogEntry[];
 }) {
   const [items, setItems] = useState<LogEntry[]>(initial);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  const supabase = createClient();
 
   async function add() {
     if (!text.trim()) return;
     setBusy(true);
-    const { data } = await supabase
-      .from("log_entries")
-      .insert({ client_id: clientId, section_key: section.key, body: text.trim(), author_initials: me, created_by: meId })
-      .select("id, body, author_initials, created_at")
-      .single();
-    if (data) setItems([data as LogEntry, ...items]);
-    setText("");
-    setBusy(false);
+    try {
+      const { result } = await post("/api/log", {
+        clientId, sectionKey: section.key, body: text.trim(), authorInitials: me,
+      });
+      if (result) setItems([result as LogEntry, ...items]);
+      setText("");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function fmt(iso: string) {
@@ -561,7 +521,7 @@ export function LogList({
         </div>
       </div>
       <SaveFoot />
-      <ActionBar clientId={clientId} />
+      <ActionBar />
     </>
   );
 }

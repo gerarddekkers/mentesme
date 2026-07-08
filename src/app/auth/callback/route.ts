@@ -1,21 +1,23 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { COOKIE, exchangeCodeForTokens } from "@/lib/auth/cognito";
 
 /**
- * Verwerkt de inloglink uit de e-mail (magic link / OTP) en zet de sessie.
+ * OAuth2-callback: wissel de code in voor tokens en zet de sessie-cookies.
  */
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/clienten";
+  if (!code) return NextResponse.redirect(`${origin}/login?fout=code`);
 
-  if (code) {
-    const supabase = createClient();
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
-    if (!error) {
-      return NextResponse.redirect(`${origin}${next}`);
-    }
+  const tokens = await exchangeCodeForTokens(code);
+  if (!tokens?.id_token) return NextResponse.redirect(`${origin}/login?fout=token`);
+
+  const jar = cookies();
+  const base = { httpOnly: true, secure: true, sameSite: "lax" as const, path: "/" };
+  jar.set(COOKIE.id, tokens.id_token, { ...base, maxAge: tokens.expires_in });
+  if (tokens.refresh_token) {
+    jar.set(COOKIE.refresh, tokens.refresh_token, { ...base, maxAge: 60 * 60 * 24 * 30 });
   }
-
-  return NextResponse.redirect(`${origin}/login?fout=inloggen`);
+  return NextResponse.redirect(`${origin}/clienten`);
 }

@@ -1,8 +1,6 @@
 "use client";
 
 import { Icon } from "@/lib/icons";
-import { createClient } from "@/lib/supabase/client";
-import { useRouter } from "next/navigation";
 
 export function ThemeToggle() {
   function toggle() {
@@ -21,17 +19,10 @@ export function ThemeToggle() {
 }
 
 export function LogoutButton() {
-  const router = useRouter();
-  async function signOut() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.push("/login");
-    router.refresh();
-  }
   return (
-    <button className="iconbtn" onClick={signOut} aria-label="Uitloggen" title="Uitloggen">
+    <a className="iconbtn" href="/auth/logout" aria-label="Uitloggen" title="Uitloggen">
       <Icon name="logout" />
-    </button>
+    </a>
   );
 }
 

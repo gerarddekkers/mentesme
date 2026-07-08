@@ -1,13 +1,10 @@
 /**
- * Auth volgens de mentesme-standaard: een token dat als `metro-auth`-header
- * naar de backend gaat (net als metro / mira). Het token bewaren we in
- * localStorage.
- *
- * >>> SEAM — hier plug je de echte metro-login in <<<
- * Vervang `login()` door jullie metro-inlogflow (mijn.metro.mentes.me) die een
- * token teruggeeft; roep daarna setToken(token) aan. Nu (dev) kun je op de
- * loginpagina een token plakken zodat de app lokaal werkt.
+ * Auth volgens de mentesme-standaard: een metro-token dat als `metro-auth`-header
+ * naar de backend gaat (net als metro-web / de mobiele app). Inloggen gaat via
+ * onze eigen API (`/api/login`), die met e-mail + wachtwoord een metro-token
+ * ophaalt. Token + actieve groep bewaren we in localStorage.
  */
+import { config } from "./config";
 
 const KEY = "zd_token";
 const GROUP = "zd_group";
@@ -25,6 +22,21 @@ export function setToken(token: string, group?: string) {
 export function isAuthenticated(): boolean {
   return Boolean(getToken());
 }
+
+/** Inloggen met Teamwork-account (e-mail + wachtwoord). Geeft true bij succes. */
+export async function login(email: string, password: string): Promise<boolean> {
+  const res = await fetch(`${config.apiUrl}/api/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) return false;
+  const data = (await res.json()) as { token?: string; group?: string };
+  if (!data?.token) return false;
+  setToken(data.token, data.group || undefined);
+  return true;
+}
+
 export function logout() {
   localStorage.removeItem(KEY);
   localStorage.removeItem(GROUP);

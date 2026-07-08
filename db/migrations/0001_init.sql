@@ -1,13 +1,14 @@
 -- ============================================================================
 --  Teamwork Cliëntdossier — databaseschema (MySQL / RDS-Aurora, eu-west-1)
 --
---  Auth loopt via Amazon Cognito; toegangscontrole gebeurt in de applicatie
---  (de backend controleert lidmaatschap per dossier). MySQL kent geen RLS.
+--  Auth loopt via de metro-backend (metro-auth token, mentesme-standaard);
+--  toegangscontrole gebeurt in de applicatie (de backend controleert
+--  lidmaatschap per dossier). MySQL kent geen RLS.
 --
 --  Draaien:  mysql --host=... --user=... -p zorgdossier < db/migrations/0001_init.sql
 -- ============================================================================
 
--- 1. PROFIELEN — één per medewerker; id = Cognito `sub`.
+-- 1. PROFIELEN — één per medewerker; id = metro user-id (als string).
 create table if not exists profiles (
   id          char(36)    not null primary key,
   full_name   varchar(255),

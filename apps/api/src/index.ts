@@ -1,3 +1,4 @@
+import "dotenv/config"; // laadt apps/api/.env in dev; in prod komen vars uit de omgeving
 import express from "express";
 import cors from "cors";
 import { api } from "./routes/api.js";

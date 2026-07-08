@@ -1,12 +1,24 @@
 import { Router, type Response } from "express";
 import { randomUUID } from "node:crypto";
 import { query, exec, tx } from "../lib/db.js";
-import { requireUser, ensureProfile, type AuthedRequest } from "../lib/auth.js";
+import { requireUser, ensureProfile, loginWithMetro, type AuthedRequest } from "../lib/auth.js";
 import { isMember, canEdit } from "../lib/access.js";
 
 export const api = Router();
 
-// Alle routes vereisen een ingelogde gebruiker + bestaand profiel.
+/* ---- Inloggen (publiek — vóór requireUser) ---- */
+// Proxy naar de metro-inlog: e-mail + wachtwoord → metro-token. Zo blijft de
+// metro-URL server-side en heeft de browser geen CORS naar metro nodig.
+api.post("/login", async (req, res) => {
+  const { email, password } = req.body ?? {};
+  if (!email?.trim() || !password)
+    return res.status(400).json({ error: "e-mail en wachtwoord verplicht" });
+  const result = await loginWithMetro(email, password);
+  if (!result) return res.status(401).json({ error: "inloggen mislukt" });
+  res.json(result);
+});
+
+// Alle overige routes vereisen een ingelogde gebruiker + bestaand profiel.
 api.use(requireUser);
 api.use(async (req: AuthedRequest, _res, next) => {
   try {

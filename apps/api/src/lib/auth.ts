@@ -9,28 +9,96 @@ export interface AuthedRequest extends Request {
 }
 
 /**
- * Auth volgens de mentesme-standaard: een token in de `metro-auth`-header
- * (+ `metro-group` voor de tenant), net als metro / mira / builder_backend.
- *
- * >>> SEAM — hier plug je de echte metro-validatie in <<<
- * Vervang `resolveUser` door een aanroep naar de metro-backend
- * (mijn.metro.mentes.me/rest/...) die het token controleert en de gebruiker
- * teruggeeft. Nu (dev): we nemen het token als gebruikers-id zodat de app
- * lokaal meteen werkt.
+ * Auth volgens de mentesme-standaard: een opaque metro-token in de
+ * `metro-auth`-header (+ `metro-group` voor de tenant), net als metro-web,
+ * de mobiele app en team-dynamics. Het token is een server-side UUID en is
+ * niet lokaal te decoderen — we valideren het tegen de metro-backend.
  */
-async function resolveUser(
-  token: string,
-  _group?: string
-): Promise<{ id: string; email?: string; name?: string } | null> {
+const METRO_BASE = (process.env.METRO_BASE_URL || "https://mijn.metro.mentes.me/rest").replace(/\/+$/, "");
+
+interface MetroUser {
+  id: string;
+  email?: string;
+  name?: string;
+}
+
+/**
+ * Korte in-memory cache (token → gebruiker) zodat we de metro-backend niet bij
+ * élke API-call bevragen. TTL bewust kort: bij uitloggen/verlopen valt het
+ * token binnen een minuut alsnog terug op 401.
+ */
+const CACHE_TTL_MS = 60_000;
+const cache = new Map<string, { user: MetroUser; at: number }>();
+
+function fullName(u: { firstName?: string; lastName?: string; email?: string }): string | undefined {
+  const name = [u.firstName, u.lastName].filter(Boolean).join(" ").trim();
+  return name || u.email || undefined;
+}
+
+/**
+ * Valideer een metro-token door een geauthenticeerde call naar de metro-backend
+ * te doen (`GET {METRO_BASE}/user` met de `metro-auth`-header). 200 = geldig,
+ * 401 = ongeldig/verlopen. Geeft de metro-identiteit terug (id/email/naam).
+ */
+async function resolveUser(token: string, group?: string): Promise<MetroUser | null> {
   if (!token) return null;
-  // TODO(metro): valideer `token` (+ group) tegen mijn.metro.mentes.me/rest/...
-  //   const r = await fetch(`${process.env.METRO_BASE_URL}/rest/auth/whoami`, {
-  //     headers: { "metro-auth": token, "metro-group": group ?? "" },
-  //   });
-  //   if (!r.ok) return null;
-  //   const u = await r.json();
-  //   return { id: u.id, email: u.email, name: u.name };
-  return { id: token, name: token };
+  const hit = cache.get(token);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.user;
+  try {
+    const r = await fetch(`${METRO_BASE}/user`, {
+      headers: {
+        "metro-auth": token,
+        ...(group ? { "metro-group": group } : {}),
+      },
+    });
+    if (!r.ok) {
+      cache.delete(token);
+      return null;
+    }
+    const u = (await r.json()) as { id: number | string; email?: string; firstName?: string; lastName?: string };
+    const user: MetroUser = { id: String(u.id), email: u.email ?? undefined, name: fullName(u) };
+    cache.set(token, { user, at: Date.now() });
+    return user;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Log in bij de metro-backend met e-mail + wachtwoord (`POST {METRO_BASE}/user/login`,
+ * body `{ id, password }`) en geef het token + actieve groep terug. Wordt gebruikt
+ * door de publieke `/api/login`-route zodat de metro-URL server-side blijft.
+ */
+export async function loginWithMetro(
+  email: string,
+  password: string
+): Promise<{ token: string; group?: string; name?: string; email?: string } | null> {
+  try {
+    const r = await fetch(`${METRO_BASE}/user/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: email.trim().toLowerCase(), password }),
+    });
+    if (!r.ok) return null;
+    const u = (await r.json()) as {
+      token?: string;
+      email?: string;
+      firstName?: string;
+      lastName?: string;
+      defaultGroupId?: number | string | null;
+      groups?: Array<{ id: number | string }>;
+    };
+    if (!u?.token) return null;
+    const group =
+      u.defaultGroupId != null
+        ? String(u.defaultGroupId)
+        : Array.isArray(u.groups) && u.groups[0]?.id != null
+          ? String(u.groups[0].id)
+          : undefined;
+    return { token: String(u.token), group, name: fullName(u), email: u.email ?? undefined };
+  } catch {
+    return null;
+  }
 }
 
 /** Express-middleware: vereist een geldige metro-auth. Zet req.userId. */

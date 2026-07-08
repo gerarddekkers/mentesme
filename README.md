@@ -58,9 +58,11 @@ echte domein). Zo komen de inloglinks op de juiste plek terecht.
 
 ## Publiceren (productie)
 
-Deploy bijvoorbeeld op [Vercel](https://vercel.com): koppel de repo, zet dezelfde
-omgevingsvariabelen, en gebruik je eigen domein. Zet `NEXT_PUBLIC_SITE_URL` op
-dat domein en voeg de redirect-URL toe in Supabase.
+Productie draait op **AWS eu-west-1 (Ierland)** op het subdomein
+**https://zorgdossier.mentes.me**, als container (zie `Dockerfile`). De volledige
+stap-voor-stap staat in **[`DEPLOY.md`](DEPLOY.md)** (ECR → App Runner/ECS →
+Route 53 + ACM). Zet `NEXT_PUBLIC_SITE_URL` op het subdomein en voeg de
+redirect-URL `https://zorgdossier.mentes.me/auth/callback` toe bij de auth-config.
 
 ## Structuur
 
